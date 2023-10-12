@@ -1,6 +1,6 @@
 use crate::math::Rect;
 
-use crate::vertex::{Buffer, IndexBuffer, Vertex, VertexBuffer, VertexTextured};
+use crate::buffer::{Buffer, IndexBuffer, Vertex, VertexBuffer, VertexTextured};
 
 pub trait Draw {
     fn draw<'a>(&'a mut self, render_pass: &mut wgpu::RenderPass<'a>);

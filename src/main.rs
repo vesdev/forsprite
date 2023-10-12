@@ -1,3 +1,4 @@
+use camera::Camera;
 use math::Rect;
 use primitive::{Draw, Image};
 use winit::{
@@ -6,11 +7,12 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
+mod buffer;
+mod camera;
 mod document;
 mod math;
 mod primitive;
-mod vertex;
-use vertex::*;
+use buffer::*;
 
 struct Phx {
     surface: wgpu::Surface,
@@ -21,6 +23,7 @@ struct Phx {
     // drop after surface
     window: Window,
     render_pipeline: wgpu::RenderPipeline,
+    camera: Camera,
     images: Vec<Image>,
 }
 
@@ -90,10 +93,12 @@ impl Phx {
             Rect::new(-0.5, -0.5, 1., 1.),
         );
 
+        let mut camera = Camera::new(&device);
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&image.bg_layout],
+                bind_group_layouts: &[&image.bg_layout, &camera.bg_layout],
                 push_constant_ranges: &[],
             });
 
@@ -142,6 +147,7 @@ impl Phx {
             size,
             render_pipeline,
             images: vec![image],
+            camera,
         }
     }
 
@@ -197,6 +203,8 @@ impl Phx {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
+            self.camera.set_buffer(&mut render_pass);
+
             for shape in &mut self.images {
                 shape.draw(&mut render_pass);
             }
