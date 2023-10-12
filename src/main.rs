@@ -1,3 +1,5 @@
+use math::Rect;
+use primitive::{Draw, Image};
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
@@ -5,10 +7,12 @@ use winit::{
 };
 
 mod document;
+mod math;
 mod primitive;
-use primitive::*;
+mod vertex;
+use vertex::*;
 
-struct State {
+struct Phx {
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -17,10 +21,10 @@ struct State {
     // drop after surface
     window: Window,
     render_pipeline: wgpu::RenderPipeline,
-    shapes: Vec<Box<dyn Shape>>,
+    images: Vec<Image>,
 }
 
-impl State {
+impl Phx {
     pub async fn new(window: Window) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -28,10 +32,6 @@ impl State {
             dx12_shader_compiler: Default::default(),
         });
 
-        // # Safety
-        //
-        // The surface needs to live as long as the window that created it.
-        // State owns the window so this should be safe.
         let surface = unsafe { instance.create_surface(&window) }.unwrap();
 
         let adapter = instance
@@ -76,61 +76,38 @@ impl State {
         };
         surface.configure(&device, &config);
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                "
-                    // Vertex shader
-
-                    struct VertexInput {
-                        @location(0) position: vec3<f32>,
-                        @location(1) color: vec3<f32>,
-                    };
-
-                    struct VertexOutput {
-                        @builtin(position) clip_position: vec4<f32>,
-                        @location(0) color: vec3<f32>,
-                    };
-
-                    @vertex
-                    fn vs_main(
-                        model: VertexInput,
-                    ) -> VertexOutput {
-                        var out: VertexOutput;
-                        out.color = model.color;
-                        out.clip_position = vec4<f32>(model.position, 1.0);
-                        return out;
-                    }
-
-                    // Fragment shader
-
-                    @fragment
-                    fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-                        return vec4<f32>(in.color, 1.0);
-                    }
-
-                "
-                .into(),
-            ),
+        let shader_textured = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Textued shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/textured.wgsl").into()),
         });
+
+        let bytes = include_bytes!("corpeG.png");
+        let image = Image::new(
+            &device,
+            &queue,
+            bytes,
+            "corpeg",
+            Rect::new(-0.5, -0.5, 1., 1.),
+        );
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&image.bg_layout],
                 push_constant_ranges: &[],
             });
 
+        //TODO: add separate pipeline for textured and colored primitives
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &shader_textured,
                 entry_point: "vs_main",
-                buffers: &[Vertex::desc()],
+                buffers: &[VertexTextured::desc()],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &shader_textured,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
@@ -156,52 +133,16 @@ impl State {
             multiview: None,
         });
 
-        let mut state = Self {
-            window,
+        Self {
             surface,
             device,
             queue,
             config,
+            window,
             size,
             render_pipeline,
-            shapes: Vec::new(),
-        };
-
-        let vertices = Vertices::from([
-            Vertex {
-                position: [-0.5, 0.0, 0.0],
-                color: [1.0, 0.0, 0.0],
-            },
-            Vertex {
-                position: [-0.75, -0.5, 0.0],
-                color: [0.0, 1.0, 0.0],
-            },
-            Vertex {
-                position: [-0.25, -0.5, 0.0],
-                color: [0.0, 0.0, 1.0],
-            },
-        ]);
-        let triangle = Triangle::new(&mut state.device, vertices);
-        state.shapes.push(Box::new(triangle));
-
-        let vertices = Vertices::from([
-            Vertex {
-                position: [0.5, 0.0, 0.0],
-                color: [1.0, 0.0, 0.0],
-            },
-            Vertex {
-                position: [0.25, -0.5, 0.0],
-                color: [0.0, 1.0, 0.0],
-            },
-            Vertex {
-                position: [0.75, -0.5, 0.0],
-                color: [0.0, 0.0, 1.0],
-            },
-        ]);
-        let triangle = Triangle::new(&mut state.device, vertices);
-        state.shapes.push(Box::new(triangle));
-
-        state
+            images: vec![image],
+        }
     }
 
     pub fn window(&self) -> &Window {
@@ -218,7 +159,7 @@ impl State {
         }
     }
 
-    pub fn input(&mut self, event: &WindowEvent) -> bool {
+    pub fn input(&mut self, _event: &WindowEvent) -> bool {
         false
     }
 
@@ -255,9 +196,8 @@ impl State {
                 depth_stencil_attachment: None,
             });
 
-            //draw stuff
             render_pass.set_pipeline(&self.render_pipeline);
-            for shape in &mut self.shapes {
+            for shape in &mut self.images {
                 shape.draw(&mut render_pass);
             }
         }
@@ -273,7 +213,7 @@ pub async fn run() {
     env_logger::init();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
-    let mut state = State::new(window).await;
+    let mut state = Phx::new(window).await;
     event_loop.run(move |event, _, control_flow| {
         match event {
             Event::WindowEvent {
